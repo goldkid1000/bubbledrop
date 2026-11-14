@@ -1,0 +1,887 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="icon" href="data:," />
+    <title>BubbleDrop</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet" />
+    <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+    <style>
+      :root {
+        --bg: #f4f6f2;
+        --surface: #ffffff;
+        --surface-2: #eef1ea;
+        --ink: #15211b;
+        --ink-soft: #47564d;
+        --line: #d9dfd5;
+        --accent: #0c7a5c;
+        --accent-ink: #ffffff;
+        --accent-soft: #dff0e8;
+        --amber: #d98a1f;
+        --amber-soft: #fbeed3;
+        --danger: #b3372c;
+        --danger-soft: #fbe7e3;
+        --radar-ring: #c3d2c6;
+        --shadow: 0 10px 30px rgba(21, 33, 27, 0.08);
+        color-scheme: light dark;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #0d130f;
+          --surface: #161e18;
+          --surface-2: #1d2820;
+          --ink: #eef3ec;
+          --ink-soft: #a7b5a9;
+          --line: #2c3a2f;
+          --accent: #2fbf94;
+          --accent-ink: #06231a;
+          --accent-soft: #173b2e;
+          --amber: #eda93f;
+          --amber-soft: #3a2c10;
+          --danger: #ff8a7a;
+          --danger-soft: #3d1d18;
+          --radar-ring: #2c4434;
+          --shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+        }
+      }
+      * { box-sizing: border-box; }
+      html { -webkit-text-size-adjust: 100%; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--ink);
+        font-family: "Outfit", system-ui, -apple-system, "Segoe UI", sans-serif;
+        line-height: 1.45;
+      }
+      button, input, select { font: inherit; }
+      button, [role="button"], select, input:not([type="checkbox"], [type="radio"]) { min-height: 2.75rem; }
+      .wrap { max-width: 1120px; margin: 0 auto; padding: 20px 16px 56px; }
+
+      /* ---------- status strip ---------- */
+      .status-strip {
+        display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center;
+        padding: 10px 14px; margin-bottom: 16px;
+        background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+        font-size: 0.92rem; color: var(--ink-soft);
+      }
+      .status-strip .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--amber); flex: none; }
+      .status-strip .dot.on { background: var(--accent); }
+      .status-strip .dot.off { background: var(--danger); }
+      .status-strip strong { color: var(--ink); font-weight: 600; }
+      .status-strip .spacer { flex: 1; }
+
+      h1 { font-size: 1.65rem; line-height: 1.15; margin: 4px 0 6px; font-weight: 800; letter-spacing: -0.01em; }
+      .lede { margin: 0 0 20px; color: var(--ink-soft); max-width: 62ch; }
+
+      /* ---------- layout ---------- */
+      .grid { display: grid; grid-template-columns: 1fr; gap: 16px; }
+      @media (min-width: 900px) {
+        .grid { grid-template-columns: 5fr 7fr; align-items: start; }
+        h1 { font-size: 2rem; }
+      }
+      .card {
+        background: var(--surface); border: 1px solid var(--line); border-radius: 14px;
+        padding: 18px; box-shadow: var(--shadow);
+      }
+      .card + .card { margin-top: 16px; }
+      .card h2 { font-size: 1.05rem; margin: 0 0 4px; font-weight: 700; }
+      .card .sub { margin: 0 0 14px; color: var(--ink-soft); font-size: 0.92rem; }
+      label.field { display: block; font-size: 0.85rem; font-weight: 600; margin: 0 0 6px; }
+      .row { display: flex; gap: 10px; flex-wrap: wrap; }
+      .row > * { flex: 1 1 auto; }
+      input[type="text"] {
+        width: 100%; padding: 10px 12px; border-radius: 9px;
+        border: 1px solid var(--line); background: var(--surface); color: var(--ink);
+      }
+      input[type="text"]:focus-visible, button:focus-visible, .bubble:focus-visible, .dropzone:focus-visible {
+        outline: 3px solid var(--amber); outline-offset: 2px;
+      }
+      .btn {
+        display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+        padding: 10px 16px; border-radius: 9px; border: 1px solid transparent;
+        background: var(--accent); color: var(--accent-ink); font-weight: 600; cursor: pointer;
+        min-height: 2.75rem;
+      }
+      .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+      .btn.ghost { background: var(--surface); color: var(--ink); border-color: var(--line); }
+      .btn.small { min-height: 2.5rem; padding: 6px 12px; font-size: 0.92rem; }
+      .btn svg { width: 18px; height: 18px; flex: none; }
+
+      /* ---------- pairing code ---------- */
+      .code-box {
+        display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+        background: var(--surface-2); border: 1px dashed var(--line); border-radius: 10px;
+        padding: 12px 14px; margin-top: 14px;
+      }
+      .code-box .code {
+        font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 1.7rem; font-weight: 600;
+        letter-spacing: 0.22em;
+      }
+      .code-box .hint { font-size: 0.85rem; color: var(--ink-soft); flex: 1 1 180px; }
+      .connect-form { margin-top: 14px; }
+      .connect-form input { text-transform: uppercase; font-family: "IBM Plex Mono", ui-monospace, monospace; letter-spacing: 0.18em; }
+      .msg { font-size: 0.9rem; margin-top: 10px; min-height: 1.3em; }
+      .msg.err { color: var(--danger); }
+      .msg.ok { color: var(--accent); }
+
+      /* ---------- radar ---------- */
+      .radar-wrap { display: flex; flex-direction: column; align-items: center; }
+      .radar {
+        position: relative; width: min(320px, 78vw); aspect-ratio: 1; border-radius: 50%;
+        border: 1px solid var(--radar-ring); margin: 8px auto 4px; overflow: visible;
+        background:
+          radial-gradient(circle, transparent 0 24%, var(--radar-ring) 24% calc(24% + 1px), transparent calc(24% + 1px) 49%, var(--radar-ring) 49% calc(49% + 1px), transparent calc(49% + 1px) 74%, var(--radar-ring) 74% calc(74% + 1px), transparent calc(74% + 1px));
+      }
+      .radar::before, .radar::after {
+        content: ""; position: absolute; background: var(--radar-ring); opacity: 0.7;
+      }
+      .radar::before { left: 50%; top: 0; bottom: 0; width: 1px; }
+      .radar::after { top: 50%; left: 0; right: 0; height: 1px; }
+      .sweep-clip {
+        position: absolute; inset: 0; border-radius: 50%; overflow: hidden; pointer-events: none;
+      }
+      .sweep {
+        position: absolute; inset: 0; border-radius: 50%;
+        background: conic-gradient(from 0deg, color-mix(in srgb, var(--accent) 26%, transparent) 0deg, transparent 70deg);
+        animation: sweep 5s linear infinite;
+      }
+      @keyframes sweep { to { transform: rotate(360deg); } }
+      @media (prefers-reduced-motion: reduce) {
+        .sweep { animation: none; }
+        .bubble { animation: none !important; }
+      }
+      .bubble {
+        position: absolute; transform: translate(-50%, -50%);
+        width: 86px; min-height: 86px; border-radius: 50%;
+        display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+        background: var(--surface); border: 2px solid var(--line); color: var(--ink);
+        cursor: pointer; padding: 8px 6px; text-align: center; z-index: 2;
+        box-shadow: var(--shadow);
+      }
+      .bubble svg { width: 26px; height: 26px; }
+      .bubble .bname { font-size: 0.72rem; font-weight: 600; line-height: 1.15; max-width: 74px; overflow-wrap: anywhere; }
+      .bubble .bkind { font-size: 0.64rem; color: var(--ink-soft); }
+      .bubble.me { border-color: var(--accent); background: var(--accent-soft); cursor: default; width: 96px; min-height: 96px; }
+      .bubble.peer.selected { border-color: var(--amber); background: var(--amber-soft); }
+      .bubble.peer { animation: bob 4s ease-in-out infinite; }
+      @keyframes bob { 0%, 100% { margin-top: 0; } 50% { margin-top: -5px; } }
+      .radar-note { font-size: 0.88rem; color: var(--ink-soft); text-align: center; margin: 10px 0 0; }
+      .device-list { list-style: none; margin: 14px 0 0; padding: 0; display: grid; gap: 8px; width: 100%; }
+      .device-list li {
+        display: flex; align-items: center; gap: 10px; padding: 10px 12px;
+        border: 1px solid var(--line); border-radius: 10px; font-size: 0.95rem;
+      }
+      .device-list .grow { flex: 1; min-width: 0; }
+      .device-list .dname { font-weight: 600; overflow-wrap: anywhere; }
+      .device-list .dmeta { color: var(--ink-soft); font-size: 0.82rem; }
+      .pill { font-size: 0.75rem; font-weight: 700; padding: 3px 9px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); white-space: nowrap; }
+      @media (prefers-color-scheme: dark) { .pill { color: var(--accent); } }
+
+      /* ---------- dropzone & files ---------- */
+      .dropzone {
+        border: 2px dashed var(--line); border-radius: 12px; padding: 22px 16px;
+        text-align: center; cursor: pointer; background: var(--surface-2);
+      }
+      .dropzone.drag { border-color: var(--accent); }
+      .dropzone svg { width: 34px; height: 34px; color: var(--accent); }
+      .dropzone p { margin: 6px 0 2px; font-weight: 600; }
+      .dropzone span { font-size: 0.86rem; color: var(--ink-soft); }
+      .file-list { list-style: none; margin: 14px 0 0; padding: 0; display: grid; gap: 8px; }
+      .file-item {
+        display: flex; align-items: center; gap: 12px; padding: 9px 10px;
+        border: 1px solid var(--line); border-radius: 10px;
+      }
+      .file-item img.thumb { width: 46px; height: 46px; object-fit: cover; border-radius: 7px; flex: none; }
+      .file-item .ficon {
+        width: 46px; height: 46px; flex: none; border-radius: 7px; background: var(--surface-2);
+        display: flex; align-items: center; justify-content: center; color: var(--ink-soft);
+      }
+      .file-item .ficon svg { width: 22px; height: 22px; }
+      .file-item .grow { flex: 1; min-width: 0; }
+      .file-item .fname { font-weight: 600; font-size: 0.94rem; overflow-wrap: anywhere; }
+      .file-item .fmeta { font-size: 0.8rem; color: var(--ink-soft); }
+      .icon-btn {
+        background: none; border: none; color: var(--ink-soft); cursor: pointer;
+        width: 44px; height: 44px; min-height: 44px; border-radius: 8px; flex: none;
+        display: inline-flex; align-items: center; justify-content: center;
+      }
+      .icon-btn svg { width: 19px; height: 19px; }
+      .progress { height: 8px; background: var(--surface-2); border-radius: 99px; overflow: hidden; margin-top: 6px; display: none; }
+      .progress.show { display: block; }
+      .progress i { display: block; height: 100%; width: 0%; background: var(--accent); border-radius: 99px; transition: width 0.15s linear; }
+      .send-bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 16px; }
+      .send-bar select {
+        flex: 1 1 180px; padding: 10px 12px; border-radius: 9px; border: 1px solid var(--line);
+        background: var(--surface); color: var(--ink);
+      }
+      .totals { font-size: 0.88rem; color: var(--ink-soft); }
+      .empty { color: var(--ink-soft); font-size: 0.94rem; border: 1px dashed var(--line); border-radius: 10px; padding: 16px; text-align: center; }
+
+      /* ---------- activity / steps ---------- */
+      .log { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; font-size: 0.9rem; }
+      .log li { display: flex; gap: 10px; }
+      .log time { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 0.78rem; color: var(--ink-soft); padding-top: 2px; flex: none; }
+      .steps { display: grid; gap: 12px; margin: 0; padding: 0; list-style: none; counter-reset: step; }
+      @media (min-width: 700px) { .steps { grid-template-columns: repeat(3, 1fr); } }
+      .steps li { background: var(--surface-2); border-radius: 10px; padding: 14px; }
+      .steps .n {
+        display: inline-flex; width: 26px; height: 26px; border-radius: 50%;
+        background: var(--accent); color: var(--accent-ink); font-weight: 700; font-size: 0.85rem;
+        align-items: center; justify-content: center; margin-bottom: 8px;
+      }
+      .steps h3 { margin: 0 0 4px; font-size: 0.98rem; }
+      .steps p { margin: 0; font-size: 0.88rem; color: var(--ink-soft); }
+      .fineprint { font-size: 0.85rem; color: var(--ink-soft); margin-top: 14px; }
+      .fineprint strong { color: var(--ink); }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="status-strip" role="status">
+        <span class="dot" id="statusDot"></span>
+        <span><strong id="statusText">Starting up…</strong></span>
+        <span class="spacer"></span>
+        <span id="netText">Checking connection…</span>
+      </div>
+
+      <h1>Send files between your phone and PC</h1>
+      <p class="lede">Open this page on both devices, trade the pairing codes, and each device pops up as a bubble on the other — then tap a bubble and send photos and files straight across. Files travel device-to-device; nothing is uploaded or stored anywhere.</p>
+
+      <div class="grid">
+        <div>
+          <!-- Device + pairing -->
+          <section class="card" aria-labelledby="pairH">
+            <h2 id="pairH">Your device</h2>
+            <p class="sub">This is how your other device will see you.</p>
+            <label class="field" for="deviceName">Device name</label>
+            <div class="row">
+              <input type="text" id="deviceName" maxlength="24" autocomplete="off" />
+              <button class="btn ghost" id="saveNameBtn" type="button" style="flex:0 1 auto;">Update name</button>
+            </div>
+            <div class="code-box">
+              <div>
+                <div style="font-size:0.78rem;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:var(--ink-soft);">Your pairing code</div>
+                <div class="code" id="myCode">······</div>
+              </div>
+              <span class="hint">Type this code into the app on your other device to connect the two.</span>
+              <button class="btn small ghost" id="copyCodeBtn" type="button">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                Copy
+              </button>
+            </div>
+            <form class="connect-form" id="connectForm">
+              <label class="field" for="remoteCode">Connect to another device</label>
+              <div class="row">
+                <input type="text" id="remoteCode" placeholder="Enter its 6-digit code" inputmode="numeric" autocomplete="off" maxlength="6" />
+                <button class="btn" type="submit" id="connectBtn" style="flex:0 1 auto;">Connect</button>
+              </div>
+              <p class="msg" id="connectMsg" aria-live="polite"></p>
+            </form>
+          </section>
+
+          <!-- Radar -->
+          <section class="card" aria-labelledby="radarH">
+            <h2 id="radarH">Nearby devices</h2>
+            <p class="sub">Connected devices appear as bubbles. Tap a bubble to aim your files at it.</p>
+            <div class="radar-wrap">
+              <div class="radar" id="radar">
+                <div class="sweep-clip" aria-hidden="true"><div class="sweep"></div></div>
+                <div class="bubble me" id="meBubble" style="left:50%;top:50%;"></div>
+              </div>
+              <p class="radar-note" id="radarNote">Looking for devices… connect with a pairing code and a bubble will appear here.</p>
+              <ul class="device-list" id="deviceList"></ul>
+            </div>
+          </section>
+        </div>
+
+        <div>
+          <!-- Send -->
+          <section class="card" aria-labelledby="sendH">
+            <h2 id="sendH">Send files &amp; photos</h2>
+            <p class="sub">Pick anything — photos from your camera roll, PDFs, videos, zips. Best for files under ~200&nbsp;MB.</p>
+            <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="Choose files or photos to send">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m17 8-5-5-5 5"/><path d="M12 3v12"/></svg>
+              <p>Tap to pick files or photos</p>
+              <span>…or drag &amp; drop them here on a computer</span>
+            </div>
+            <input type="file" id="fileInput" multiple hidden />
+            <ul class="file-list" id="queueList"></ul>
+            <div class="send-bar">
+              <select id="recipientSelect" aria-label="Send to">
+                <option value="">No device connected yet</option>
+              </select>
+              <button class="btn" id="sendBtn" type="button" disabled>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
+                Send
+              </button>
+            </div>
+            <p class="totals" id="queueTotals"></p>
+            <p class="msg" id="sendMsg" aria-live="polite"></p>
+          </section>
+
+          <!-- Received -->
+          <section class="card" aria-labelledby="recvH">
+            <h2 id="recvH">Received</h2>
+            <p class="sub">Files sent to this device land here — tap Download to keep them.</p>
+            <div id="receivedWrap">
+              <p class="empty">Nothing received yet. When a connected device sends you something, it shows up here.</p>
+            </div>
+            <ul class="file-list" id="receivedList"></ul>
+          </section>
+
+          <!-- Activity -->
+          <section class="card" aria-labelledby="logH">
+            <h2 id="logH">Activity</h2>
+            <p class="sub">Connections and transfers on this device.</p>
+            <ul class="log" id="logList"></ul>
+          </section>
+        </div>
+      </div>
+
+      <section class="card" style="margin-top:16px;" aria-labelledby="howH">
+        <h2 id="howH">How it works</h2>
+        <p class="sub">The same flow as AirDrop or LocalSend, in the browser.</p>
+        <ol class="steps">
+          <li>
+            <span class="n">1</span>
+            <h3>Open it on both devices</h3>
+            <p>Phone and PC each get their own 6-digit pairing code. Both just need an internet connection — on the same Wi-Fi, transfers run at full local speed.</p>
+          </li>
+          <li>
+            <span class="n">2</span>
+            <h3>Trade codes once</h3>
+            <p>Type the PC's code into the phone (or the other way round). The devices find each other and a bubble appears on both screens.</p>
+          </li>
+          <li>
+            <span class="n">3</span>
+            <h3>Tap, send, done</h3>
+            <p>Pick files, tap the bubble, hit Send. The file streams directly between the two devices over an encrypted WebRTC connection — no account, no cloud copy.</p>
+          </li>
+        </ol>
+        <p class="fineprint"><strong>One honest note:</strong> browsers can't scan your Wi-Fi network or use Bluetooth for file transfer the way native apps can, so discovery here works by pairing code instead of auto-scanning. A native version (like LocalSend) could auto-find devices on the same Wi-Fi — this page is the web version of the same idea, ready to put on GitHub Pages.</p>
+      </section>
+    </div>
+
+    <script>
+      (function () {
+        "use strict";
+
+        var PEER_PREFIX = "fsdrop2026-";
+        var CHUNK = 64 * 1024;
+
+        var $ = function (id) { return document.getElementById(id); };
+        var statusDot = $("statusDot"), statusText = $("statusText"), netText = $("netText");
+        var deviceNameInput = $("deviceName"), myCodeEl = $("myCode");
+        var connectForm = $("connectForm"), remoteCodeInput = $("remoteCode"), connectBtn = $("connectBtn"), connectMsg = $("connectMsg");
+        var radar = $("radar"), meBubble = $("meBubble"), radarNote = $("radarNote"), deviceList = $("deviceList");
+        var dropzone = $("dropzone"), fileInput = $("fileInput"), queueList = $("queueList");
+        var recipientSelect = $("recipientSelect"), sendBtn = $("sendBtn"), queueTotals = $("queueTotals"), sendMsg = $("sendMsg");
+        var receivedWrap = $("receivedWrap"), receivedList = $("receivedList"), logList = $("logList");
+
+        /* ---------- icons ---------- */
+        var ICONS = {
+          phone: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="2" width="10" height="20" rx="2"/><path d="M12 18h.01"/></svg>',
+          pc: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/></svg>',
+          laptop: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 19h18"/><path d="M5 6a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v9H5z"/></svg>',
+          tablet: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="2" width="16" height="20" rx="2"/><path d="M12 18h.01"/></svg>',
+          file: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>',
+          image: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/></svg>',
+          x: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>',
+          download: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg>'
+        };
+        function iconFor(kind) { return ICONS[kind] || ICONS.pc; }
+        function kindLabel(kind) {
+          return { phone: "Phone", pc: "Computer", laptop: "Laptop", tablet: "Tablet" }[kind] || "Device";
+        }
+
+        /* ---------- this device ---------- */
+        function detectKind() {
+          var ua = navigator.userAgent || "";
+          if (/iPad|Tablet/i.test(ua)) return "tablet";
+          if (/Android/i.test(ua) && !/Mobile/i.test(ua)) return "tablet";
+          if (/Mobi|iPhone|Android.*Mobile|Windows Phone/i.test(ua)) return "phone";
+          if (/Macintosh/i.test(ua) && navigator.maxTouchPoints > 1) return "tablet";
+          return "pc";
+        }
+        var myKind = detectKind();
+        var myName = myKind === "phone" ? "My Phone" : myKind === "tablet" ? "My Tablet" : "My PC";
+        deviceNameInput.value = myName;
+
+        function renderMe() {
+          meBubble.innerHTML = iconFor(myKind) +
+            '<span class="bname"></span><span class="bkind">This device</span>';
+          meBubble.querySelector(".bname").textContent = myName;
+        }
+        renderMe();
+
+        /* ---------- helpers ---------- */
+        function fmtSize(bytes) {
+          if (bytes < 1024) return bytes + " B";
+          var units = ["KB", "MB", "GB"], i = -1, n = bytes;
+          do { n = n / 1024; i++; } while (n >= 1024 && i < units.length - 1);
+          return n.toFixed(n >= 100 ? 0 : 1) + " " + units[i];
+        }
+        function nowTime() {
+          return new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+        }
+        function log(text) {
+          var li = document.createElement("li");
+          var t = document.createElement("time");
+          t.textContent = nowTime();
+          var s = document.createElement("span");
+          s.textContent = text;
+          li.appendChild(t); li.appendChild(s);
+          logList.insertBefore(li, logList.firstChild);
+          while (logList.children.length > 14) logList.removeChild(logList.lastChild);
+        }
+        function setStatus(mode, text) {
+          statusDot.className = "dot" + (mode ? " " + mode : "");
+          statusText.textContent = text;
+        }
+        function updateNet() {
+          netText.textContent = navigator.onLine ? "Internet: connected" : "Internet: offline — reconnect to pair devices";
+        }
+        window.addEventListener("online", updateNet);
+        window.addEventListener("offline", updateNet);
+        updateNet();
+
+        /* ---------- peer state ---------- */
+        var peer = null, myCode = null;
+        var peers = new Map();       // code -> { code, name, kind, conn, bubbleEl }
+        var selectedCode = null;
+        var sending = false;
+
+        function randomCode() {
+          return String(Math.floor(100000 + Math.random() * 900000));
+        }
+
+        function startPeer(code) {
+          if (typeof Peer === "undefined") {
+            setStatus("off", "Pairing service didn't load");
+            connectMsg.textContent = "The pairing library couldn't load — check your internet connection and reload the page.";
+            connectMsg.className = "msg err";
+            myCodeEl.textContent = "— — —";
+            return;
+          }
+          myCode = code;
+          peer = new Peer(PEER_PREFIX + code, { debug: 0 });
+
+          peer.on("open", function () {
+            myCodeEl.textContent = code.split("").join(" ");
+            setStatus("on", "Ready — share your code with your other device");
+            log("This device is ready. Pairing code " + code + ".");
+          });
+          peer.on("connection", function (conn) { wireConnection(conn, null); });
+          peer.on("error", function (err) {
+            if (err.type === "unavailable-id") {
+              try { peer.destroy(); } catch (e) {}
+              startPeer(randomCode());
+              return;
+            }
+            if (err.type === "peer-unavailable") {
+              connectMsg.textContent = "No device with that code is online right now. Check the code and that the other device has this page open.";
+              connectMsg.className = "msg err";
+              connectBtn.disabled = false;
+              return;
+            }
+            if (err.type === "network" || err.type === "server-error") {
+              setStatus("off", "Can't reach the pairing service");
+              log("Pairing service connection problem (" + err.type + ").");
+              return;
+            }
+            log("Connection note: " + err.type);
+          });
+          peer.on("disconnected", function () {
+            setStatus("", "Reconnecting to pairing service…");
+            try { peer.reconnect(); } catch (e) {}
+          });
+        }
+
+        function wireConnection(conn, knownCode) {
+          conn.on("open", function () {
+            conn.send({ type: "hello", name: myName, kind: myKind });
+          });
+          conn.on("data", function (data) { handleData(conn, data); });
+          conn.on("close", function () { removePeer(conn); });
+          conn.on("error", function () { removePeer(conn); });
+          conn._fsCode = knownCode || null;
+        }
+
+        function addPeer(code, name, kind, conn) {
+          if (peers.has(code)) {
+            var existing = peers.get(code);
+            existing.name = name; existing.kind = kind; existing.conn = conn;
+            conn._fsCode = code;
+            renderPeers();
+            return;
+          }
+          peers.set(code, { code: code, name: name, kind: kind, conn: conn });
+          conn._fsCode = code;
+          if (!selectedCode) selectedCode = code;
+          renderPeers();
+          log("Connected to " + name + " (" + kindLabel(kind) + "). Its bubble is on your radar.");
+          connectMsg.textContent = "Connected to " + name + " — pick files below and hit Send.";
+          connectMsg.className = "msg ok";
+          connectBtn.disabled = false;
+        }
+
+        function removePeer(conn) {
+          var code = conn._fsCode;
+          if (code && peers.has(code)) {
+            var p = peers.get(code);
+            peers.delete(code);
+            if (selectedCode === code) selectedCode = peers.size ? peers.keys().next().value : null;
+            log(p.name + " disconnected.");
+            renderPeers();
+          }
+        }
+
+        function bubblePosition(i, total) {
+          var angle = (Math.PI * 2 * i) / Math.max(total, 1) - Math.PI / 2;
+          var r = 33;
+          return { left: 50 + r * Math.cos(angle), top: 50 + r * Math.sin(angle) };
+        }
+
+        function renderPeers() {
+          radar.querySelectorAll(".bubble.peer").forEach(function (b) { b.remove(); });
+          deviceList.innerHTML = "";
+          recipientSelect.innerHTML = "";
+
+          var arr = Array.from(peers.values());
+          if (!arr.length) {
+            var opt = document.createElement("option");
+            opt.value = ""; opt.textContent = "No device connected yet";
+            recipientSelect.appendChild(opt);
+            radarNote.textContent = "Looking for devices… connect with a pairing code and a bubble will appear here.";
+          } else {
+            radarNote.textContent = arr.length === 1
+              ? "1 device connected. Tap its bubble, pick files, and send."
+              : arr.length + " devices connected. Tap a bubble to choose where files go.";
+          }
+
+          arr.forEach(function (p, i) {
+            var pos = bubblePosition(i, arr.length);
+            var b = document.createElement("button");
+            b.type = "button";
+            b.className = "bubble peer" + (p.code === selectedCode ? " selected" : "");
+            b.style.left = pos.left + "%";
+            b.style.top = pos.top + "%";
+            b.setAttribute("aria-label", "Send to " + p.name);
+            b.innerHTML = iconFor(p.kind) + '<span class="bname"></span><span class="bkind"></span>';
+            b.querySelector(".bname").textContent = p.name;
+            b.querySelector(".bkind").textContent = kindLabel(p.kind);
+            b.addEventListener("click", function () {
+              selectedCode = p.code;
+              renderPeers();
+            });
+            radar.appendChild(b);
+
+            var li = document.createElement("li");
+            var nm = document.createElement("div");
+            nm.className = "grow";
+            var d1 = document.createElement("div"); d1.className = "dname"; d1.textContent = p.name;
+            var d2 = document.createElement("div"); d2.className = "dmeta"; d2.textContent = kindLabel(p.kind) + " · code " + p.code;
+            nm.appendChild(d1); nm.appendChild(d2);
+            var pill = document.createElement("span"); pill.className = "pill"; pill.textContent = "Connected";
+            li.appendChild(nm); li.appendChild(pill);
+            deviceList.appendChild(li);
+
+            var o = document.createElement("option");
+            o.value = p.code; o.textContent = p.name + " (" + kindLabel(p.kind) + ")";
+            if (p.code === selectedCode) o.selected = true;
+            recipientSelect.appendChild(o);
+          });
+          recipientSelect.value = selectedCode || "";
+          updateSendBtn();
+        }
+
+        recipientSelect.addEventListener("change", function () {
+          selectedCode = recipientSelect.value || null;
+          renderPeers();
+        });
+
+        /* ---------- connect out ---------- */
+        connectForm.addEventListener("submit", function (e) {
+          e.preventDefault();
+          var code = remoteCodeInput.value.replace(/\D/g, "");
+          if (code.length !== 6) {
+            connectMsg.textContent = "That code should be 6 digits — it's shown big on your other device.";
+            connectMsg.className = "msg err";
+            return;
+          }
+          if (code === myCode) {
+            connectMsg.textContent = "That's this device's own code. Enter the code from your other device instead.";
+            connectMsg.className = "msg err";
+            return;
+          }
+          if (peers.has(code)) {
+            connectMsg.textContent = "You're already connected to that device.";
+            connectMsg.className = "msg ok";
+            return;
+          }
+          if (!peer) {
+            connectMsg.textContent = "Still starting up — give it a second and try again.";
+            connectMsg.className = "msg err";
+            return;
+          }
+          connectMsg.textContent = "Looking for device " + code + "…";
+          connectMsg.className = "msg";
+          connectBtn.disabled = true;
+          var conn = peer.connect(PEER_PREFIX + code, { reliable: true });
+          wireConnection(conn, code);
+          setTimeout(function () {
+            if (!peers.has(code)) {
+              connectBtn.disabled = false;
+              if (connectMsg.textContent.indexOf("Looking") === 0) {
+                connectMsg.textContent = "Still looking… make sure the other device has this page open and shows code " + code + ".";
+              }
+            }
+          }, 9000);
+        });
+
+        $("saveNameBtn").addEventListener("click", function () {
+          var v = deviceNameInput.value.trim();
+          if (v) myName = v.slice(0, 24);
+          deviceNameInput.value = myName;
+          renderMe();
+          peers.forEach(function (p) {
+            try { p.conn.send({ type: "hello", name: myName, kind: myKind }); } catch (e) {}
+          });
+          log("Device name set to “" + myName + "”.");
+        });
+
+        $("copyCodeBtn").addEventListener("click", function () {
+          if (!myCode) return;
+          var btn = this;
+          function done() {
+            btn.lastChild.textContent = " Copied";
+            setTimeout(function () { btn.lastChild.textContent = " Copy"; }, 1600);
+          }
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(myCode).then(done, done);
+          } else { done(); }
+        });
+
+        /* ---------- file queue ---------- */
+        var queue = []; // { id, file, url (images only), li, bar }
+        var qCounter = 0;
+
+        dropzone.addEventListener("click", function () { fileInput.click(); });
+        dropzone.addEventListener("keydown", function (e) {
+          if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fileInput.click(); }
+        });
+        ["dragenter", "dragover"].forEach(function (ev) {
+          dropzone.addEventListener(ev, function (e) { e.preventDefault(); dropzone.classList.add("drag"); });
+        });
+        ["dragleave", "drop"].forEach(function (ev) {
+          dropzone.addEventListener(ev, function (e) { e.preventDefault(); dropzone.classList.remove("drag"); });
+        });
+        dropzone.addEventListener("drop", function (e) {
+          if (e.dataTransfer && e.dataTransfer.files.length) addFiles(e.dataTransfer.files);
+        });
+        fileInput.addEventListener("change", function () {
+          addFiles(fileInput.files);
+          fileInput.value = "";
+        });
+
+        function addFiles(fileList) {
+          Array.prototype.forEach.call(fileList, function (file) {
+            var item = { id: "q" + (++qCounter), file: file, url: null };
+            if (file.type.indexOf("image/") === 0) item.url = URL.createObjectURL(file);
+            queue.push(item);
+            queueList.appendChild(buildFileRow(item, true));
+          });
+          updateQueueMeta();
+          updateSendBtn();
+        }
+
+        function buildFileRow(item, removable) {
+          var li = document.createElement("li");
+          li.className = "file-item";
+          if (item.url) {
+            var img = document.createElement("img");
+            img.className = "thumb"; img.src = item.url; img.alt = "";
+            li.appendChild(img);
+          } else {
+            var ic = document.createElement("div");
+            ic.className = "ficon";
+            ic.innerHTML = item.file && item.file.type.indexOf("image/") === 0 ? ICONS.image : ICONS.file;
+            li.appendChild(ic);
+          }
+          var grow = document.createElement("div");
+          grow.className = "grow";
+          var nm = document.createElement("div");
+          nm.className = "fname";
+          nm.textContent = item.file ? item.file.name : item.name;
+          var meta = document.createElement("div");
+          meta.className = "fmeta";
+          meta.textContent = fmtSize(item.file ? item.file.size : item.size);
+          var prog = document.createElement("div");
+          prog.className = "progress";
+          var bar = document.createElement("i");
+          prog.appendChild(bar);
+          grow.appendChild(nm); grow.appendChild(meta); grow.appendChild(prog);
+          li.appendChild(grow);
+          item._bar = bar; item._prog = prog; item._meta = meta; item._li = li;
+
+          if (removable) {
+            var rm = document.createElement("button");
+            rm.type = "button"; rm.className = "icon-btn";
+            rm.setAttribute("aria-label", "Remove " + (item.file ? item.file.name : item.name));
+            rm.innerHTML = ICONS.x;
+            rm.addEventListener("click", function () {
+              queue = queue.filter(function (q) { return q.id !== item.id; });
+              if (item.url) URL.revokeObjectURL(item.url);
+              li.remove();
+              updateQueueMeta(); updateSendBtn();
+            });
+            li.appendChild(rm);
+          }
+          return li;
+        }
+
+        function updateQueueMeta() {
+          if (!queue.length) { queueTotals.textContent = ""; return; }
+          var total = queue.reduce(function (s, q) { return s + q.file.size; }, 0);
+          queueTotals.textContent = queue.length + (queue.length === 1 ? " file" : " files") + " · " + fmtSize(total) + " ready to send";
+        }
+
+        function updateSendBtn() {
+          sendBtn.disabled = sending || !queue.length || !selectedCode || !peers.has(selectedCode);
+        }
+
+        /* ---------- transfer protocol ---------- */
+        var incoming = new Map(); // id -> { name, size, mime, chunks:[], got, item }
+
+        function handleData(conn, data) {
+          if (!data || typeof data !== "object") return;
+          if (data.type === "hello") {
+            var code = conn._fsCode;
+            if (!code) {
+              code = (conn.peer || "").replace(PEER_PREFIX, "");
+              conn._fsCode = code;
+            }
+            addPeer(code, data.name || "Device", data.kind || "pc", conn);
+            return;
+          }
+          if (data.type === "file-start") {
+            var item = { name: data.name, size: data.size, mime: data.mime || "", url: null };
+            var li = buildFileRow(item, false);
+            receivedList.appendChild(li);
+            receivedWrap.style.display = "none";
+            incoming.set(data.id, { meta: item, chunks: [], got: 0 });
+            item._prog.classList.add("show");
+            item._meta.textContent = "Receiving… 0 of " + fmtSize(data.size);
+            log("Receiving “" + data.name + "” (" + fmtSize(data.size) + ")…");
+            return;
+          }
+          if (data.type === "file-chunk") {
+            var inc = incoming.get(data.id);
+            if (!inc) return;
+            inc.chunks.push(data.data);
+            inc.got += data.data.byteLength || data.data.length || 0;
+            var pct = inc.meta.size ? Math.min(100, Math.round((inc.got / inc.meta.size) * 100)) : 100;
+            inc.meta._bar.style.width = pct + "%";
+            inc.meta._meta.textContent = "Receiving… " + fmtSize(inc.got) + " of " + fmtSize(inc.meta.size);
+            return;
+          }
+          if (data.type === "file-end") {
+            var done = incoming.get(data.id);
+            if (!done) return;
+            incoming.delete(data.id);
+            var blob = new Blob(done.chunks, { type: done.meta.mime });
+            var url = URL.createObjectURL(blob);
+            done.meta._bar.style.width = "100%";
+            done.meta._meta.textContent = fmtSize(done.meta.size) + " · Received " + nowTime();
+            var dl = document.createElement("a");
+            dl.className = "btn small";
+            dl.href = url;
+            dl.download = done.meta.name;
+            dl.innerHTML = ICONS.download.replace("<svg", '<svg width="16" height="16"') + " Download";
+            done.meta._li.appendChild(dl);
+            log("Received “" + done.meta.name + "”.");
+            try { conn.send({ type: "file-ack", id: data.id }); } catch (e) {}
+            return;
+          }
+        }
+
+        function waitForDrain(conn) {
+          return new Promise(function (resolve) {
+            var dc = conn.dataChannel;
+            if (!dc || dc.bufferedAmount < 4 * 1024 * 1024) { resolve(); return; }
+            var t = setInterval(function () {
+              if (!dc || dc.bufferedAmount < 2 * 1024 * 1024) { clearInterval(t); resolve(); }
+            }, 60);
+          });
+        }
+
+        sendBtn.addEventListener("click", function () {
+          var p = peers.get(selectedCode);
+          if (!p || !queue.length || sending) return;
+          sending = true;
+          updateSendBtn();
+          var conn = p.conn;
+          var items = queue.slice();
+          sendMsg.textContent = "Sending to " + p.name + "… keep this page open.";
+          sendMsg.className = "msg";
+
+          (async function () {
+            var sentNames = [];
+            for (var k = 0; k < items.length; k++) {
+              var item = items[k];
+              var file = item.file;
+              var id = "f" + Date.now() + "-" + k;
+              item._prog.classList.add("show");
+              try {
+                conn.send({ type: "file-start", id: id, name: file.name, size: file.size, mime: file.type });
+                var buf = await file.arrayBuffer();
+                var offset = 0, idx = 0;
+                while (offset < buf.byteLength) {
+                  var slice = buf.slice(offset, offset + CHUNK);
+                  await waitForDrain(conn);
+                  conn.send({ type: "file-chunk", id: id, index: idx, data: slice });
+                  offset += slice.byteLength; idx++;
+                  var pct = Math.round((offset / buf.byteLength) * 100);
+                  item._bar.style.width = pct + "%";
+                  item._meta.textContent = fmtSize(file.size) + " · " + pct + "% sent";
+                }
+                if (buf.byteLength === 0) item._bar.style.width = "100%";
+                conn.send({ type: "file-end", id: id });
+                item._meta.textContent = fmtSize(file.size) + " · Sent ✓";
+                sentNames.push(file.name);
+              } catch (err) {
+                item._meta.textContent = fmtSize(file.size) + " · Failed to send";
+                sendMsg.textContent = "Something interrupted the transfer — check both devices are still connected, then try again.";
+                sendMsg.className = "msg err";
+              }
+            }
+            queue = queue.filter(function (q) { return sentNames.indexOf(q.file.name) === -1 || items.indexOf(q) === -1; });
+            // Remove sent rows from the queue list
+            items.forEach(function (it) {
+              if (sentNames.indexOf(it.file.name) !== -1 && it._li) it._li.remove();
+            });
+            queue = [];
+            queueList.innerHTML = "";
+            updateQueueMeta();
+            if (sentNames.length) {
+              sendMsg.textContent = "Sent " + sentNames.length + (sentNames.length === 1 ? " file" : " files") + " to " + p.name + ". It should now be in their Received list.";
+              sendMsg.className = "msg ok";
+              log("Sent " + sentNames.length + (sentNames.length === 1 ? " file" : " files") + " to " + p.name + ": " + sentNames.join(", ") + ".");
+            }
+            sending = false;
+            updateSendBtn();
+          })();
+        });
+
+        /* ---------- go ---------- */
+        log("App started on this " + kindLabel(myKind).toLowerCase() + ".");
+        startPeer(randomCode());
+        renderPeers();
+      })();
+    </script>
+  </body>
+</html>
