@@ -1046,7 +1046,7 @@
           connectMsg.textContent = "Looking for device " + code + "…";
           connectMsg.className = "msg";
           connectBtn.disabled = true;
-          var conn = peer.connect(PEER_PREFIX + code, { reliable: true });
+          var conn = peer.connect(PEER_PREFIX + code);
           wireConnection(conn, code);
           setTimeout(function () {
             if (!peers.has(code)) {
@@ -1198,6 +1198,44 @@
           if (typeof data.length === "number") return data.length;
           return 0;
         }
+        /* Chunks travel as raw binary messages (an ArrayBuffer / Blob sent
+           on its own), never wrapped inside a control object — wrapping
+           binary in a serialized object is what scrambled received files
+           into unplayable ones. Control messages are plain objects with a
+           string `type`; anything binary is file data for the transfer
+           currently open on that connection. */
+        function isBinaryChunk(data) {
+          if (!data || typeof data !== "object") return false;
+          if (typeof Blob !== "undefined" && data instanceof Blob) return true;
+          if (typeof ArrayBuffer !== "undefined" && (data instanceof ArrayBuffer || ArrayBuffer.isView(data))) return true;
+          return false;
+        }
+        function blobToArrayBuffer(blob) {
+          if (blob.arrayBuffer) return blob.arrayBuffer();
+          return new Promise(function (resolve, reject) {
+            var r = new FileReader();
+            r.onload = function () { resolve(r.result); };
+            r.onerror = function () { reject(r.error || new Error("read failed")); };
+            r.readAsArrayBuffer(blob);
+          });
+        }
+        function sha256HexOfBuffer(buf) {
+          if (!(window.crypto && crypto.subtle && crypto.subtle.digest)) return Promise.resolve("");
+          return crypto.subtle.digest("SHA-256", buf).then(function (h) {
+            var bytes = new Uint8Array(h), hex = "";
+            for (var i = 0; i < bytes.length; i++) hex += ("0" + bytes[i].toString(16)).slice(-2);
+            return hex;
+          }).catch(function () { return ""; });
+        }
+        function verifyReceivedHash(blob, expectedHex) {
+          if (!expectedHex) return Promise.resolve(true);
+          if (!(window.crypto && crypto.subtle && crypto.subtle.digest)) return Promise.resolve(true);
+          return blobToArrayBuffer(blob).then(function (buf) {
+            return sha256HexOfBuffer(buf);
+          }).then(function (hex) {
+            return !hex || hex === expectedHex;
+          }).catch(function () { return true; });
+        }
         function triggerBlobDownload(url, filename) {
           var a = document.createElement("a");
           a.href = url;
@@ -1221,6 +1259,7 @@
                     : "Share sheet closed — if you tapped Save to Files, it's in Files → Downloads.");
                 }).catch(function (err) {
                   if (err && err.name === "AbortError") { done("Save cancelled — tap Save again and pick Save " + (file.type.indexOf("video/") === 0 ? "Video" : file.type.indexOf("image/") === 0 ? "Image" : "to Files") + "."); return; }
+                  log("Share sheet failed (" + (err && err.name ? err.name : "unknown error") + ") — fell back to a download.");
                   triggerBlobDownload(url, file.name);
                   done("Share didn't open, so a download was started instead — check Files → Downloads.");
                 });
@@ -1235,6 +1274,18 @@
         }
 
         function handleData(conn, data) {
+          if (isBinaryChunk(data)) {
+            var target = conn._fsActiveId ? incoming.get(conn._fsActiveId) : null;
+            if (target) {
+              target.chunks[target.count] = data;
+              target.count++;
+              target.got += chunkByteSize(data);
+              var bpct = target.meta.size ? Math.min(100, Math.round((target.got / target.meta.size) * 100)) : 100;
+              target.meta._bar.style.width = bpct + "%";
+              target.meta._meta.textContent = "Receiving… " + fmtSize(target.got) + " of " + fmtSize(target.meta.size);
+            }
+            return;
+          }
           if (!data || typeof data !== "object") return;
           if (data.type === "hello") {
             var code = conn._fsCode;
@@ -1250,7 +1301,8 @@
             var li = buildFileRow(item, false);
             receivedList.appendChild(li);
             receivedWrap.style.display = "none";
-            incoming.set(data.id, { meta: item, chunks: [], got: 0 });
+            incoming.set(data.id, { meta: item, chunks: [], got: 0, count: 0, expectedChunks: data.chunks || 0, hash: data.hash || "" });
+            conn._fsActiveId = data.id;
             item._prog.classList.add("show");
             item._meta.textContent = "Receiving… 0 of " + fmtSize(data.size);
             log("Receiving “" + data.name + "” (" + fmtSize(data.size) + ")…");
@@ -1259,7 +1311,8 @@
           if (data.type === "file-chunk") {
             var inc = incoming.get(data.id);
             if (!inc) return;
-            inc.chunks.push(data.data);
+            if (typeof data.index === "number") { inc.chunks[data.index] = data.data; } else { inc.chunks[inc.count] = data.data; }
+            inc.count++;
             inc.got += chunkByteSize(data.data);
             var pct = inc.meta.size ? Math.min(100, Math.round((inc.got / inc.meta.size) * 100)) : 100;
             inc.meta._bar.style.width = pct + "%";
@@ -1270,12 +1323,48 @@
             var done = incoming.get(data.id);
             if (!done) return;
             incoming.delete(data.id);
+            if (conn._fsActiveId === data.id) conn._fsActiveId = null;
             var mime = inferMime(done.meta.name, done.meta.mime);
             done.meta.mime = mime;
+            /* Reassemble strictly in chunk order. A gap, a byte-count
+               mismatch, or a checksum mismatch means the transfer was
+               mangled on the way over — say so and do NOT hand over a
+               broken file that won't play anywhere. */
+            var expectedTotal = done.expectedChunks || done.count;
+            var ordered = [], gapFound = false;
+            for (var ci = 0; ci < expectedTotal; ci++) {
+              if (done.chunks[ci] == null) { gapFound = true; break; }
+              ordered.push(done.chunks[ci]);
+            }
             var file;
-            try { file = new File(done.chunks, done.meta.name, { type: mime }); }
-            catch (e) { file = new Blob(done.chunks, { type: mime }); }
+            try { file = new File(ordered, done.meta.name, { type: mime }); }
+            catch (e) { file = new Blob(ordered, { type: mime }); }
+            if (gapFound || file.size !== done.meta.size) {
+              done.meta._prog.classList.remove("show");
+              done.meta._meta.textContent = fmtSize(done.meta.size) + " · Transfer incomplete";
+              var badHint = document.createElement("p");
+              badHint.className = "recv-hint";
+              badHint.innerHTML = "<strong>This file didn't arrive complete</strong> — only " + fmtSize(file.size) + " of " + fmtSize(done.meta.size) + " made it, so it wouldn't have played. Ask the other device to send it again.";
+              done.meta._li.appendChild(badHint);
+              log("“" + done.meta.name + "” arrived incomplete — not saved.");
+              return;
+            }
             var url = URL.createObjectURL(file);
+            verifyReceivedHash(file, done.hash).then(function (hashOk) {
+              if (!hashOk) {
+                done.meta._prog.classList.remove("show");
+                done.meta._meta.textContent = fmtSize(done.meta.size) + " · Transfer corrupted";
+                var corruptHint = document.createElement("p");
+                corruptHint.className = "recv-hint";
+                corruptHint.innerHTML = "<strong>This file's contents were scrambled during the transfer</strong> (checksum mismatch), so it wouldn't have played. Ask the other device to send it again.";
+                done.meta._li.appendChild(corruptHint);
+                log("“" + done.meta.name + "” failed its checksum — not saved.");
+                URL.revokeObjectURL(url);
+                return;
+              }
+              presentReceived();
+            });
+            function presentReceived() {
             done.meta._bar.style.width = "100%";
             done.meta._prog.classList.remove("show");
             done.meta._meta.textContent = fmtSize(done.meta.size) + " · Received " + nowTime();
@@ -1353,6 +1442,7 @@
 
             log("Received “" + done.meta.name + "”.");
             try { conn.send({ type: "file-ack", id: data.id }); } catch (e) {}
+            }
             return;
           }
         }
@@ -1385,13 +1475,19 @@
               var id = "f" + Date.now() + "-" + k;
               item._prog.classList.add("show");
               try {
-                conn.send({ type: "file-start", id: id, name: file.name, size: file.size, mime: file.type });
                 var buf = await file.arrayBuffer();
+                var totalChunks = Math.ceil(buf.byteLength / CHUNK);
+                var hashHex = await sha256HexOfBuffer(buf);
+                conn.send({ type: "file-start", id: id, name: file.name, size: file.size, mime: file.type, chunks: totalChunks, hash: hashHex });
                 var offset = 0, idx = 0;
                 while (offset < buf.byteLength) {
                   var slice = buf.slice(offset, offset + CHUNK);
                   await waitForDrain(conn);
-                  conn.send({ type: "file-chunk", id: id, index: idx, data: slice });
+                  /* Raw binary message — NOT wrapped in an object. The
+                     receiver slots chunks into place by arrival order on
+                     this ordered channel and verifies count, byte total,
+                     and the SHA-256 above before presenting the file. */
+                  conn.send(slice);
                   offset += slice.byteLength; idx++;
                   var pct = Math.round((offset / buf.byteLength) * 100);
                   item._bar.style.width = pct + "%";
