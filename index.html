@@ -742,6 +742,24 @@
         var PEER_PREFIX = "fsdrop2026-";
         var CHUNK = 64 * 1024;
 
+        /* ICE servers for the WebRTC link itself. STUN alone can't cross
+           a lot of real-world NAT setups (phone on cellular or campus
+           Wi-Fi talking to a PC on a home router was the "still looking…"
+           hang: the pairing service found the other device, but no media
+           path ever opened). The TURN relays below give the connection a
+           fallback path through a relay when a direct path is blocked. */
+        var PEER_ICE_CONFIG = {
+          iceServers: [
+            { urls: "stun:stun.l.google.com:19302" },
+            { urls: "stun:stun1.l.google.com:19302" },
+            { urls: "stun:stun.cloudflare.com:3478" },
+            { urls: "turn:openrelay.metered.ca:80", username: "openrelayproject", credential: "openrelayproject" },
+            { urls: "turn:openrelay.metered.ca:443", username: "openrelayproject", credential: "openrelayproject" },
+            { urls: "turn:openrelay.metered.ca:443?transport=tcp", username: "openrelayproject", credential: "openrelayproject" },
+            { urls: "turn:0.peerjs.com:3478", username: "peerjs", credential: "peerjsp" }
+          ]
+        };
+
         var $ = function (id) { return document.getElementById(id); };
         var statusDot = $("statusDot"), statusText = $("statusText"), netText = $("netText");
         var deviceNameInput = $("deviceName"), myCodeEl = $("myCode");
@@ -819,7 +837,8 @@
         updateNet();
 
         /* ---------- peer state ---------- */
-        var peer = null, myCode = null;
+        var peer = null, myCode = null, peerReady = false;
+        var pendingConnect = null; // { code, conn, timer, slowTimer } while a code lookup is in flight
         var peers = new Map();       // code -> { code, name, kind, conn, bubbleEl }
         var selectedCode = null;
         var sending = false;
@@ -849,9 +868,10 @@
           }
           if (peerWatchdog) { clearTimeout(peerWatchdog); peerWatchdog = null; }
           myCode = code;
+          peerReady = false;
           var thisPeer;
           try {
-            thisPeer = new Peer(PEER_PREFIX + code, { debug: 0 });
+            thisPeer = new Peer(PEER_PREFIX + code, { debug: 0, config: PEER_ICE_CONFIG });
           } catch (e) {
             peerAttempts++;
             schedulePeerRetry();
@@ -876,6 +896,7 @@
 
           thisPeer.on("open", function () {
             opened = true;
+            peerReady = true;
             peerAttempts = 0;
             if (peerWatchdog) { clearTimeout(peerWatchdog); peerWatchdog = null; }
             myCodeEl.textContent = code.split("").join(" ");
@@ -891,12 +912,17 @@
               return;
             }
             if (err.type === "peer-unavailable") {
-              connectMsg.textContent = "No device with that code is online right now. Check the code and that the other device has this page open.";
-              connectMsg.className = "msg err";
-              connectBtn.disabled = false;
+              if (pendingConnect) {
+                failPendingConnect("No device with code " + pendingConnect.code + " is online right now. Check the code on the other device — and that it has BubbleDrop open with its status showing “Ready” — then tap Connect again.");
+              } else {
+                connectMsg.textContent = "No device with that code is online right now. Check the code and that the other device has this page open.";
+                connectMsg.className = "msg err";
+                connectBtn.disabled = false;
+              }
               return;
             }
             if (err.type === "network" || err.type === "server-error") {
+              peerReady = false;
               peerAttempts++;
               setStatus("", "Can't reach the pairing service — retrying…");
               log("Pairing service connection problem (" + err.type + "). Retrying…");
@@ -908,6 +934,7 @@
           });
           thisPeer.on("disconnected", function () {
             if (peer !== thisPeer) return;
+            peerReady = false;
             setStatus("", "Reconnecting to pairing service…");
             try { thisPeer.reconnect(); } catch (e) {
               peerAttempts++;
@@ -916,17 +943,71 @@
           });
         }
 
+        function sendHello(conn) {
+          try { conn.send({ type: "hello", name: myName, kind: myKind }); } catch (e) {}
+        }
+
+        function clearPendingConnect() {
+          if (!pendingConnect) return;
+          if (pendingConnect.timer) clearTimeout(pendingConnect.timer);
+          if (pendingConnect.slowTimer) clearTimeout(pendingConnect.slowTimer);
+          pendingConnect = null;
+          connectBtn.disabled = false;
+        }
+
+        function failPendingConnect(message) {
+          var p = pendingConnect;
+          clearPendingConnect();
+          if (p && p.conn) { try { p.conn.close(); } catch (e) {} }
+          connectMsg.textContent = message;
+          connectMsg.className = "msg err";
+        }
+
         function wireConnection(conn, knownCode) {
           conn.on("open", function () {
-            conn.send({ type: "hello", name: myName, kind: myKind });
+            sendHello(conn);
+            /* A single hello can be lost while the channel is still
+               settling, and then neither side ever registers the other —
+               the old "still looking…" hang. Keep re-sending until the
+               other side's hello comes back and the peer is registered
+               (addPeer clears this timer). */
+            var tries = 0;
+            conn._fsHelloTimer = setInterval(function () {
+              tries++;
+              var c = conn._fsCode;
+              if ((c && peers.has(c)) || tries >= 8) {
+                clearInterval(conn._fsHelloTimer);
+                conn._fsHelloTimer = null;
+                return;
+              }
+              sendHello(conn);
+            }, 2500);
           });
           conn.on("data", function (data) { handleData(conn, data); });
-          conn.on("close", function () { removePeer(conn); });
-          conn.on("error", function () { removePeer(conn); });
+          conn.on("close", function () {
+            if (conn._fsHelloTimer) { clearInterval(conn._fsHelloTimer); conn._fsHelloTimer = null; }
+            if (pendingConnect && pendingConnect.conn === conn) {
+              failPendingConnect("The connection to device " + pendingConnect.code + " closed before pairing finished. Make sure the other device keeps BubbleDrop open, then tap Connect again.");
+            }
+            removePeer(conn);
+          });
+          conn.on("error", function () {
+            if (pendingConnect && pendingConnect.conn === conn) {
+              failPendingConnect("Couldn't connect to device " + pendingConnect.code + ". Check both devices are online and the other one shows “Ready”, then tap Connect again.");
+            }
+            removePeer(conn);
+          });
+          conn.on("iceStateChanged", function (state) {
+            if (state === "failed" && pendingConnect && pendingConnect.conn === conn && !peers.has(pendingConnect.code)) {
+              failPendingConnect("Couldn't open a path to device " + pendingConnect.code + " — the two networks blocked the direct link. Try with both devices on the same Wi-Fi, then tap Connect again.");
+            }
+          });
           conn._fsCode = knownCode || null;
         }
 
         function addPeer(code, name, kind, conn) {
+          if (conn._fsHelloTimer) { clearInterval(conn._fsHelloTimer); conn._fsHelloTimer = null; }
+          if (pendingConnect && pendingConnect.code === code) clearPendingConnect();
           if (peers.has(code)) {
             var existing = peers.get(code);
             existing.name = name; existing.kind = kind; existing.conn = conn;
@@ -1038,24 +1119,50 @@
             connectMsg.className = "msg ok";
             return;
           }
-          if (!peer) {
-            connectMsg.textContent = "Still starting up — give it a second and try again.";
+          if (pendingConnect) {
+            connectMsg.textContent = "Already looking for device " + pendingConnect.code + " — give it a few more seconds.";
+            connectMsg.className = "msg";
+            return;
+          }
+          if (!peer || !peerReady) {
+            /* Connecting before this device has finished registering
+               with the pairing service used to hang forever with no
+               error at all — the attempt simply never went anywhere. */
+            connectMsg.textContent = "This device is still connecting to the pairing service — wait until the status at the top of the page says “Ready”, then tap Connect again.";
             connectMsg.className = "msg err";
+            if (!peer) startPeer(myCode || randomCode());
             return;
           }
           connectMsg.textContent = "Looking for device " + code + "…";
           connectMsg.className = "msg";
           connectBtn.disabled = true;
-          var conn = peer.connect(PEER_PREFIX + code);
+          var conn;
+          try {
+            conn = peer.connect(PEER_PREFIX + code, { reliable: true });
+          } catch (e) {
+            connectMsg.textContent = "Couldn't start the connection — check this device is online, then tap Connect again.";
+            connectMsg.className = "msg err";
+            connectBtn.disabled = false;
+            return;
+          }
           wireConnection(conn, code);
-          setTimeout(function () {
-            if (!peers.has(code)) {
-              connectBtn.disabled = false;
-              if (connectMsg.textContent.indexOf("Looking") === 0) {
-                connectMsg.textContent = "Still looking… make sure the other device has this page open and shows code " + code + ".";
-              }
+          /* A lookup now has a real lifecycle: a progress note at 8s and
+             a hard stop at 20s that closes the attempt and says exactly
+             what to check — instead of sitting on "Still looking…"
+             forever. */
+          pendingConnect = { code: code, conn: conn, timer: null, slowTimer: null };
+          pendingConnect.slowTimer = setTimeout(function () {
+            if (pendingConnect && pendingConnect.code === code && !peers.has(code)) {
+              connectMsg.textContent = "Still looking for device " + code + "… the other device must have BubbleDrop open with its status showing “Ready”.";
+              connectMsg.className = "msg";
             }
-          }, 9000);
+          }, 8000);
+          pendingConnect.timer = setTimeout(function () {
+            if (pendingConnect && pendingConnect.code === code && !peers.has(code)) {
+              failPendingConnect("Couldn't reach device " + code + ". Check the code matches the one on the other device, that the other device has BubbleDrop open and its status says “Ready”, and that both devices are online — then tap Connect to try again.");
+              log("Pairing lookup for code " + code + " timed out.");
+            }
+          }, 20000);
         });
 
         $("saveNameBtn").addEventListener("click", function () {
