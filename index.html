@@ -1,4 +1,7 @@
 <!doctype html>
+<!-- BubbleDrop v4 — pairing diagnostics release. Version convention: this
+     stamp and the service-worker cache name in assets/sw.js
+     ("bubbledrop-v4") always move together. -->
 <html lang="en">
   <head>
     <meta charset="utf-8" />
@@ -169,6 +172,24 @@
         letter-spacing: 0.22em;
       }
       .code-box .hint { font-size: 0.85rem; color: var(--ink-soft); flex: 1 1 180px; }
+      /* ---------- this device's pairing-service status ---------- */
+      .pair-status {
+        display: flex; gap: 10px; align-items: flex-start;
+        padding: 10px 12px; margin-bottom: 14px;
+        border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2);
+        font-size: 0.92rem; color: var(--ink-soft);
+      }
+      .pair-status .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--amber); flex: none; margin-top: 5px; }
+      .pair-status.ready { border-color: var(--accent); background: var(--accent-soft); }
+      .pair-status.ready .dot { background: var(--accent); }
+      .pair-status.failed { border-color: var(--danger); background: var(--danger-soft); }
+      .pair-status.failed .dot { background: var(--danger); }
+      .pair-status strong { color: var(--ink); font-weight: 700; display: block; }
+      .pair-status span { display: block; }
+      .invite-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
+      .invite-row .hint { font-size: 0.85rem; color: var(--ink-soft); flex: 1 1 180px; margin: 0; }
+      .retry-row { margin-top: 10px; }
+      .retry-row[hidden] { display: none; }
       .connect-form { margin-top: 14px; }
       .connect-form input { text-transform: uppercase; font-family: "IBM Plex Mono", ui-monospace, monospace; letter-spacing: 0.18em; }
       .msg { font-size: 0.9rem; margin-top: 10px; min-height: 1.3em; }
@@ -471,6 +492,13 @@
           <section class="card" aria-labelledby="pairH">
             <h2 id="pairH">Your device</h2>
             <p class="sub">This is how your other device will see you.</p>
+            <div class="pair-status" id="pairStatus" role="status" aria-live="polite">
+              <span class="dot" aria-hidden="true"></span>
+              <div>
+                <strong id="pairStatusTitle">Connecting to the pairing service…</strong>
+                <span id="pairStatusDetail">This device is registering so other devices can find it. Wait for “Ready” before connecting.</span>
+              </div>
+            </div>
             <label class="field" for="deviceName">Device name</label>
             <div class="row">
               <input type="text" id="deviceName" maxlength="24" autocomplete="off" />
@@ -487,6 +515,13 @@
                 Copy
               </button>
             </div>
+            <div class="invite-row">
+              <button class="btn small" id="copyInviteBtn" type="button" disabled>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                <span id="copyInviteLabel">Copy invite link</span>
+              </button>
+              <p class="hint">Easier than typing: send this link to your other device (text, email, notes). Opening it fills in your code and starts connecting on its own — no mistyped digits.</p>
+            </div>
             <form class="connect-form" id="connectForm">
               <label class="field" for="remoteCode">Connect to another device</label>
               <div class="row">
@@ -494,6 +529,12 @@
                 <button class="btn" type="submit" id="connectBtn" style="flex:0 1 auto;">Connect</button>
               </div>
               <p class="msg" id="connectMsg" aria-live="polite"></p>
+              <div class="retry-row" id="retryRow" hidden>
+                <button class="btn ghost" id="retryConnectBtn" type="button">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+                  Retry connection
+                </button>
+              </div>
             </form>
           </section>
 
@@ -568,7 +609,7 @@
           <li>
             <span class="n">2</span>
             <h3>Trade codes once</h3>
-            <p>Type the PC's code into the phone (or the other way round). The devices find each other and a bubble appears on both screens.</p>
+            <p>Type the PC's code into the phone (or the other way round) — or tap <strong>Copy invite link</strong> and open that link on the other device, which fills the code in and connects by itself. The devices find each other and a bubble appears on both screens.</p>
           </li>
           <li>
             <span class="n">3</span>
@@ -763,7 +804,10 @@
         var $ = function (id) { return document.getElementById(id); };
         var statusDot = $("statusDot"), statusText = $("statusText"), netText = $("netText");
         var deviceNameInput = $("deviceName"), myCodeEl = $("myCode");
+        var pairStatusEl = $("pairStatus"), pairStatusTitle = $("pairStatusTitle"), pairStatusDetail = $("pairStatusDetail");
+        var copyInviteBtn = $("copyInviteBtn"), copyInviteLabel = $("copyInviteLabel");
         var connectForm = $("connectForm"), remoteCodeInput = $("remoteCode"), connectBtn = $("connectBtn"), connectMsg = $("connectMsg");
+        var retryRow = $("retryRow"), retryConnectBtn = $("retryConnectBtn");
         var radar = $("radar"), meBubble = $("meBubble"), radarNote = $("radarNote"), deviceList = $("deviceList");
         var dropzone = $("dropzone"), fileInput = $("fileInput"), queueList = $("queueList");
         var recipientSelect = $("recipientSelect"), sendBtn = $("sendBtn"), queueTotals = $("queueTotals"), sendMsg = $("sendMsg");
@@ -829,6 +873,16 @@
           statusDot.className = "dot" + (mode ? " " + mode : "");
           statusText.textContent = text;
         }
+        /* The always-visible status inside the "Your device" card. This is
+           the at-a-glance answer to "is the problem on MY side?": it only
+           says Ready once this device has actually registered with the
+           pairing service (PeerJS "open"), not merely once the page loaded. */
+        function setPairStatus(state, title, detail) {
+          pairStatusEl.className = "pair-status" + (state === "ready" ? " ready" : state === "failed" ? " failed" : "");
+          pairStatusTitle.textContent = title;
+          pairStatusDetail.textContent = detail;
+          if (copyInviteBtn) copyInviteBtn.disabled = state !== "ready" || !myCode;
+        }
         function updateNet() {
           netText.textContent = navigator.onLine ? "Internet: connected" : "Internet: offline — reconnect to pair devices";
         }
@@ -839,6 +893,20 @@
         /* ---------- peer state ---------- */
         var peer = null, myCode = null, peerReady = false;
         var pendingConnect = null; // { code, conn, timer, slowTimer } while a code lookup is in flight
+        var lastAttemptCode = null;  // last code a lookup was tried for — the Retry button re-runs this
+        /* Invite link (?code=XXXXXX): filled in on arrival, and the lookup
+           starts by itself as soon as THIS device has registered — see the
+           peer "open" handler. Consumed once so reconnects don't re-fire it. */
+        var inviteCode = null, inviteConsumed = false;
+        try {
+          var inviteParam = new URLSearchParams(window.location.search).get("code");
+          if (inviteParam && /^\d{6}$/.test(inviteParam.replace(/\D/g, "")) && inviteParam.replace(/\D/g, "").length === 6) {
+            inviteCode = inviteParam.replace(/\D/g, "");
+            remoteCodeInput.value = inviteCode;
+            connectMsg.textContent = "Invite link opened — code " + inviteCode + " is filled in. Connecting as soon as this device is ready…";
+            connectMsg.className = "msg";
+          }
+        } catch (e) { /* no usable invite code in the address — normal start */ }
         var peers = new Map();       // code -> { code, name, kind, conn, bubbleEl }
         var selectedCode = null;
         var sending = false;
@@ -861,6 +929,7 @@
         function startPeer(code) {
           if (typeof Peer === "undefined") {
             setStatus("off", "Pairing service didn't load");
+            setPairStatus("failed", "Can't reach the pairing service — check your connection", "The pairing library itself didn't load on this device, so no other device can find this one yet. Check this device's internet connection, then reload the page.");
             connectMsg.textContent = "The pairing library couldn't load — check your internet connection and reload the page.";
             connectMsg.className = "msg err";
             myCodeEl.textContent = "— — —";
@@ -869,6 +938,7 @@
           if (peerWatchdog) { clearTimeout(peerWatchdog); peerWatchdog = null; }
           myCode = code;
           peerReady = false;
+          setPairStatus("connecting", "Connecting to the pairing service…", "This device is registering so other devices can find it. Wait for “Ready” before connecting.");
           var thisPeer;
           try {
             thisPeer = new Peer(PEER_PREFIX + code, { debug: 0, config: PEER_ICE_CONFIG });
@@ -888,7 +958,8 @@
             if (!opened && peer === thisPeer) {
               peerAttempts++;
               try { thisPeer.destroy(); } catch (e) {}
-              setStatus("", "Pairing service is slow — retrying…");
+              setStatus("off", "Can't reach the pairing service — retrying…");
+              setPairStatus("failed", "Can't reach the pairing service — check your connection", "This device hasn't registered yet, so the problem is on THIS side for now — no other device can find this code until this says “Ready”. It keeps retrying on its own; check this device's Wi-Fi or data.");
               log("Pairing sign-up timed out; retrying.");
               schedulePeerRetry();
             }
@@ -900,8 +971,22 @@
             peerAttempts = 0;
             if (peerWatchdog) { clearTimeout(peerWatchdog); peerWatchdog = null; }
             myCodeEl.textContent = code.split("").join(" ");
-            setStatus("on", "Ready — share your code with your other device");
+            setStatus("on", "Ready — your code is live");
+            setPairStatus("ready", "Ready — your code is live", "This device has registered with the pairing service. If a connection still fails, the problem is on the other device's side — check its code and its own status.");
             log("This device is ready. Pairing code " + code + ".");
+            /* Invite link: the code was filled in on arrival; start the
+               lookup now that this device is actually registered. */
+            if (inviteCode && !inviteConsumed) {
+              inviteConsumed = true;
+              if (inviteCode === myCode) {
+                connectMsg.textContent = "That invite link carries this device's own code — open it on your OTHER device instead.";
+                connectMsg.className = "msg err";
+              } else {
+                connectMsg.textContent = "Invite link: connecting to device " + inviteCode + "…";
+                connectMsg.className = "msg";
+                attemptConnect(inviteCode);
+              }
+            }
           });
           thisPeer.on("connection", function (conn) { wireConnection(conn, null); });
           thisPeer.on("error", function (err) {
@@ -913,10 +998,9 @@
             }
             if (err.type === "peer-unavailable") {
               if (pendingConnect) {
-                failPendingConnect("No device with code " + pendingConnect.code + " is online right now. Check the code on the other device — and that it has BubbleDrop open with its status showing “Ready” — then tap Connect again.");
+                failPendingConnect("No device with code " + pendingConnect.code + " is online right now.");
               } else {
-                connectMsg.textContent = "No device with that code is online right now. Check the code and that the other device has this page open.";
-                connectMsg.className = "msg err";
+                showConnectFailure("No device with that code is online right now.");
                 connectBtn.disabled = false;
               }
               return;
@@ -924,7 +1008,8 @@
             if (err.type === "network" || err.type === "server-error") {
               peerReady = false;
               peerAttempts++;
-              setStatus("", "Can't reach the pairing service — retrying…");
+              setStatus("off", "Can't reach the pairing service — retrying…");
+              setPairStatus("failed", "Can't reach the pairing service — check your connection", "This device dropped off the pairing service, so the problem is on THIS side right now. It keeps retrying on its own; check this device's Wi-Fi or data.");
               log("Pairing service connection problem (" + err.type + "). Retrying…");
               try { thisPeer.destroy(); } catch (e) {}
               schedulePeerRetry();
@@ -936,6 +1021,7 @@
             if (peer !== thisPeer) return;
             peerReady = false;
             setStatus("", "Reconnecting to pairing service…");
+            setPairStatus("connecting", "Connecting to the pairing service…", "This device dropped off the pairing service and is registering again. Wait for “Ready” before connecting.");
             try { thisPeer.reconnect(); } catch (e) {
               peerAttempts++;
               schedulePeerRetry();
@@ -955,12 +1041,21 @@
           connectBtn.disabled = false;
         }
 
+        /* Every failed lookup ends here (or in failPendingConnect below):
+           keep the specific reason, say plainly which side to check, and
+           leave a visible Retry button that re-runs the same code. */
+        function showConnectFailure(message) {
+          connectMsg.textContent = message +
+            " Which side to check — THIS device: the status under “Your device” above should say “Ready — your code is live”; if it doesn't, the problem is on this side. THE OTHER device: check the code you entered matches the one on its screen, and that its own status also says “Ready”.";
+          connectMsg.className = "msg err";
+          if (lastAttemptCode) retryRow.hidden = false;
+        }
+
         function failPendingConnect(message) {
           var p = pendingConnect;
           clearPendingConnect();
           if (p && p.conn) { try { p.conn.close(); } catch (e) {} }
-          connectMsg.textContent = message;
-          connectMsg.className = "msg err";
+          showConnectFailure(message);
         }
 
         function wireConnection(conn, knownCode) {
@@ -1012,6 +1107,7 @@
             var existing = peers.get(code);
             existing.name = name; existing.kind = kind; existing.conn = conn;
             conn._fsCode = code;
+            retryRow.hidden = true;
             renderPeers();
             return;
           }
@@ -1020,6 +1116,7 @@
           if (!selectedCode) selectedCode = code;
           renderPeers();
           log("Connected to " + name + " (" + kindLabel(kind) + "). Its bubble is on your radar.");
+          retryRow.hidden = true;
           connectMsg.textContent = "Connected to " + name + " — pick files below and hit Send.";
           connectMsg.className = "msg ok";
           connectBtn.disabled = false;
@@ -1101,20 +1198,24 @@
         });
 
         /* ---------- connect out ---------- */
-        connectForm.addEventListener("submit", function (e) {
-          e.preventDefault();
-          var code = remoteCodeInput.value.replace(/\D/g, "");
+        /* One lookup path, three callers: the Connect form, the Retry
+           button after a failure, and an opened invite link (which calls
+           this itself once this device has registered). */
+        function attemptConnect(rawCode) {
+          var code = String(rawCode || "").replace(/\D/g, "");
           if (code.length !== 6) {
             connectMsg.textContent = "That code should be 6 digits — it's shown big on your other device.";
             connectMsg.className = "msg err";
             return;
           }
+          remoteCodeInput.value = code;
           if (code === myCode) {
             connectMsg.textContent = "That's this device's own code. Enter the code from your other device instead.";
             connectMsg.className = "msg err";
             return;
           }
           if (peers.has(code)) {
+            retryRow.hidden = true;
             connectMsg.textContent = "You're already connected to that device.";
             connectMsg.className = "msg ok";
             return;
@@ -1124,12 +1225,14 @@
             connectMsg.className = "msg";
             return;
           }
+          lastAttemptCode = code;
+          retryRow.hidden = true;
           if (!peer || !peerReady) {
             /* Connecting before this device has finished registering
                with the pairing service used to hang forever with no
-               error at all — the attempt simply never went anywhere. */
-            connectMsg.textContent = "This device is still connecting to the pairing service — wait until the status at the top of the page says “Ready”, then tap Connect again.";
-            connectMsg.className = "msg err";
+               error at all — the attempt simply never went anywhere.
+               Now it fails visibly, on THIS side, with a Retry button. */
+            showConnectFailure("This device hasn't finished registering with the pairing service yet, so the lookup never started.");
             if (!peer) startPeer(myCode || randomCode());
             return;
           }
@@ -1140,16 +1243,15 @@
           try {
             conn = peer.connect(PEER_PREFIX + code, { reliable: true });
           } catch (e) {
-            connectMsg.textContent = "Couldn't start the connection — check this device is online, then tap Connect again.";
-            connectMsg.className = "msg err";
+            showConnectFailure("Couldn't start the connection from this device.");
             connectBtn.disabled = false;
             return;
           }
           wireConnection(conn, code);
-          /* A lookup now has a real lifecycle: a progress note at 8s and
-             a hard stop at 20s that closes the attempt and says exactly
-             what to check — instead of sitting on "Still looking…"
-             forever. */
+          /* A lookup has a real lifecycle: a progress note at 8s and a
+             hard stop at 20s that closes the attempt, keeps the specific
+             reason on screen, and offers Retry — instead of sitting on
+             "Still looking…" forever. */
           pendingConnect = { code: code, conn: conn, timer: null, slowTimer: null };
           pendingConnect.slowTimer = setTimeout(function () {
             if (pendingConnect && pendingConnect.code === code && !peers.has(code)) {
@@ -1159,10 +1261,23 @@
           }, 8000);
           pendingConnect.timer = setTimeout(function () {
             if (pendingConnect && pendingConnect.code === code && !peers.has(code)) {
-              failPendingConnect("Couldn't reach device " + code + ". Check the code matches the one on the other device, that the other device has BubbleDrop open and its status says “Ready”, and that both devices are online — then tap Connect to try again.");
+              failPendingConnect("Couldn't reach device " + code + " in 20 seconds — it didn't answer the lookup.");
               log("Pairing lookup for code " + code + " timed out.");
             }
           }, 20000);
+        }
+
+        connectForm.addEventListener("submit", function (e) {
+          e.preventDefault();
+          attemptConnect(remoteCodeInput.value);
+        });
+
+        retryConnectBtn.addEventListener("click", function () {
+          if (!lastAttemptCode) return;
+          retryRow.hidden = true;
+          connectMsg.textContent = "Retrying device " + lastAttemptCode + "…";
+          connectMsg.className = "msg";
+          attemptConnect(lastAttemptCode);
         });
 
         $("saveNameBtn").addEventListener("click", function () {
@@ -1186,6 +1301,39 @@
           if (navigator.clipboard && navigator.clipboard.writeText) {
             navigator.clipboard.writeText(myCode).then(done, done);
           } else { done(); }
+        });
+
+        /* Invite link: this page's address with this device's code in it.
+           Opening it on the other device fills the code in and starts the
+           lookup automatically once that device registers (see the peer
+           "open" handler), so there are no digits to mistype. */
+        function inviteLink() {
+          var base = window.location.href.split(/[?#]/)[0];
+          return base + "?code=" + myCode;
+        }
+        copyInviteBtn.addEventListener("click", function () {
+          if (!myCode) return;
+          var link = inviteLink();
+          function done(ok) {
+            copyInviteLabel.textContent = ok ? "Invite link copied" : "Couldn't copy — code is " + myCode;
+            setTimeout(function () { copyInviteLabel.textContent = "Copy invite link"; }, 2000);
+            if (ok) log("Invite link copied — opening it on the other device fills in code " + myCode + " and connects automatically.");
+          }
+          function fallbackCopy() {
+            try {
+              var ta = document.createElement("textarea");
+              ta.value = link;
+              ta.style.position = "fixed"; ta.style.opacity = "0";
+              document.body.appendChild(ta);
+              ta.select();
+              var ok = document.execCommand && document.execCommand("copy");
+              ta.remove();
+              done(!!ok);
+            } catch (e) { done(false); }
+          }
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(link).then(function () { done(true); }, fallbackCopy);
+          } else { fallbackCopy(); }
         });
 
         /* ---------- file queue ---------- */
@@ -1757,7 +1905,7 @@
         if ("serviceWorker" in navigator) {
           window.addEventListener("load", function () {
             try {
-              navigator.serviceWorker.register("data:application/javascript;base64,LyogQnViYmxlRHJvcCBzZXJ2aWNlIHdvcmtlciDigJQgY2FjaGVzIHRoZSBhcHAgc2hlbGwgc28gdGhlIGluc3RhbGxlZCBhcHAKICAgb3BlbnMgZmFzdCBhbmQgdGhlIG1haW4gc2NyZWVucyBsb2FkIG9mZmxpbmUuIEZpbGUgdHJhbnNmZXJzIHRoZW1zZWx2ZXMKICAgYWx3YXlzIG5lZWQgYm90aCBkZXZpY2VzIG9ubGluZSAodGhleSBwYWlyIG92ZXIgdGhlIGludGVybmV0KS4gKi8KdmFyIENBQ0hFID0gImJ1YmJsZWRyb3AtdjMiOwp2YXIgU0hFTEwgPSBbCiAgIi4uL2luZGV4Lmh0bWwiLAogICIuL3BlZXJqcy5taW4uanMiLAogICIuL21hbmlmZXN0Lmpzb24iLAogICIuL2ljb24tMTkyLnBuZyIsCiAgIi4vaWNvbi01MTIucG5nIiwKICAiLi9hcHBsZS10b3VjaC1pY29uLnBuZyIKXTsKCnNlbGYuYWRkRXZlbnRMaXN0ZW5lcigiaW5zdGFsbCIsIGZ1bmN0aW9uIChldmVudCkgewogIGV2ZW50LndhaXRVbnRpbCgKICAgIGNhY2hlcy5vcGVuKENBQ0hFKS50aGVuKGZ1bmN0aW9uIChjYWNoZSkgewogICAgICByZXR1cm4gY2FjaGUuYWRkQWxsKFNIRUxMKS5jYXRjaChmdW5jdGlvbiAoKSB7IC8qIGEgbWlzc2luZyBmaWxlIG11c3Qgbm90IGJsb2NrIGluc3RhbGwgKi8gfSk7CiAgICB9KS50aGVuKGZ1bmN0aW9uICgpIHsgcmV0dXJuIHNlbGYuc2tpcFdhaXRpbmcoKTsgfSkKICApOwp9KTsKCnNlbGYuYWRkRXZlbnRMaXN0ZW5lcigiYWN0aXZhdGUiLCBmdW5jdGlvbiAoZXZlbnQpIHsKICBldmVudC53YWl0VW50aWwoCiAgICBjYWNoZXMua2V5cygpLnRoZW4oZnVuY3Rpb24gKGtleXMpIHsKICAgICAgcmV0dXJuIFByb21pc2UuYWxsKGtleXMubWFwKGZ1bmN0aW9uIChrKSB7CiAgICAgICAgcmV0dXJuIGsgPT09IENBQ0hFID8gbnVsbCA6IGNhY2hlcy5kZWxldGUoayk7CiAgICAgIH0pKTsKICAgIH0pLnRoZW4oZnVuY3Rpb24gKCkgeyByZXR1cm4gc2VsZi5jbGllbnRzLmNsYWltKCk7IH0pCiAgKTsKfSk7CgpzZWxmLmFkZEV2ZW50TGlzdGVuZXIoImZldGNoIiwgZnVuY3Rpb24gKGV2ZW50KSB7CiAgaWYgKGV2ZW50LnJlcXVlc3QubWV0aG9kICE9PSAiR0VUIikgcmV0dXJuOwogIGV2ZW50LnJlc3BvbmRXaXRoKAogICAgZmV0Y2goZXZlbnQucmVxdWVzdCkudGhlbihmdW5jdGlvbiAocmVzKSB7CiAgICAgIHZhciBjb3B5ID0gcmVzLmNsb25lKCk7CiAgICAgIGNhY2hlcy5vcGVuKENBQ0hFKS50aGVuKGZ1bmN0aW9uIChjYWNoZSkgewogICAgICAgIGlmIChyZXMub2sgJiYgbmV3IFVSTChldmVudC5yZXF1ZXN0LnVybCkub3JpZ2luID09PSBzZWxmLmxvY2F0aW9uLm9yaWdpbikgewogICAgICAgICAgY2FjaGUucHV0KGV2ZW50LnJlcXVlc3QsIGNvcHkpOwogICAgICAgIH0KICAgICAgfSk7CiAgICAgIHJldHVybiByZXM7CiAgICB9KS5jYXRjaChmdW5jdGlvbiAoKSB7CiAgICAgIHJldHVybiBjYWNoZXMubWF0Y2goZXZlbnQucmVxdWVzdCwgeyBpZ25vcmVTZWFyY2g6IHRydWUgfSkudGhlbihmdW5jdGlvbiAoaGl0KSB7CiAgICAgICAgaWYgKGhpdCkgcmV0dXJuIGhpdDsKICAgICAgICBpZiAoZXZlbnQucmVxdWVzdC5tb2RlID09PSAibmF2aWdhdGUiKSByZXR1cm4gY2FjaGVzLm1hdGNoKCIuLi9pbmRleC5odG1sIik7CiAgICAgICAgcmV0dXJuIFJlc3BvbnNlLmVycm9yKCk7CiAgICAgIH0pOwogICAgfSkKICApOwp9KTsK").catch(function () {});
+              navigator.serviceWorker.register("data:application/javascript;base64,LyogQnViYmxlRHJvcCBzZXJ2aWNlIHdvcmtlciDigJQgY2FjaGVzIHRoZSBhcHAgc2hlbGwgc28gdGhlIGluc3RhbGxlZCBhcHAKICAgb3BlbnMgZmFzdCBhbmQgdGhlIG1haW4gc2NyZWVucyBsb2FkIG9mZmxpbmUuIEZpbGUgdHJhbnNmZXJzIHRoZW1zZWx2ZXMKICAgYWx3YXlzIG5lZWQgYm90aCBkZXZpY2VzIG9ubGluZSAodGhleSBwYWlyIG92ZXIgdGhlIGludGVybmV0KS4gKi8KdmFyIENBQ0hFID0gImJ1YmJsZWRyb3AtdjQiOwp2YXIgU0hFTEwgPSBbCiAgIi4uL2luZGV4Lmh0bWwiLAogICIuL3BlZXJqcy5taW4uanMiLAogICIuL21hbmlmZXN0Lmpzb24iLAogICIuL2ljb24tMTkyLnBuZyIsCiAgIi4vaWNvbi01MTIucG5nIiwKICAiLi9hcHBsZS10b3VjaC1pY29uLnBuZyIKXTsKCnNlbGYuYWRkRXZlbnRMaXN0ZW5lcigiaW5zdGFsbCIsIGZ1bmN0aW9uIChldmVudCkgewogIGV2ZW50LndhaXRVbnRpbCgKICAgIGNhY2hlcy5vcGVuKENBQ0hFKS50aGVuKGZ1bmN0aW9uIChjYWNoZSkgewogICAgICByZXR1cm4gY2FjaGUuYWRkQWxsKFNIRUxMKS5jYXRjaChmdW5jdGlvbiAoKSB7IC8qIGEgbWlzc2luZyBmaWxlIG11c3Qgbm90IGJsb2NrIGluc3RhbGwgKi8gfSk7CiAgICB9KS50aGVuKGZ1bmN0aW9uICgpIHsgcmV0dXJuIHNlbGYuc2tpcFdhaXRpbmcoKTsgfSkKICApOwp9KTsKCnNlbGYuYWRkRXZlbnRMaXN0ZW5lcigiYWN0aXZhdGUiLCBmdW5jdGlvbiAoZXZlbnQpIHsKICBldmVudC53YWl0VW50aWwoCiAgICBjYWNoZXMua2V5cygpLnRoZW4oZnVuY3Rpb24gKGtleXMpIHsKICAgICAgcmV0dXJuIFByb21pc2UuYWxsKGtleXMubWFwKGZ1bmN0aW9uIChrKSB7CiAgICAgICAgcmV0dXJuIGsgPT09IENBQ0hFID8gbnVsbCA6IGNhY2hlcy5kZWxldGUoayk7CiAgICAgIH0pKTsKICAgIH0pLnRoZW4oZnVuY3Rpb24gKCkgeyByZXR1cm4gc2VsZi5jbGllbnRzLmNsYWltKCk7IH0pCiAgKTsKfSk7CgpzZWxmLmFkZEV2ZW50TGlzdGVuZXIoImZldGNoIiwgZnVuY3Rpb24gKGV2ZW50KSB7CiAgaWYgKGV2ZW50LnJlcXVlc3QubWV0aG9kICE9PSAiR0VUIikgcmV0dXJuOwogIGV2ZW50LnJlc3BvbmRXaXRoKAogICAgZmV0Y2goZXZlbnQucmVxdWVzdCkudGhlbihmdW5jdGlvbiAocmVzKSB7CiAgICAgIHZhciBjb3B5ID0gcmVzLmNsb25lKCk7CiAgICAgIGNhY2hlcy5vcGVuKENBQ0hFKS50aGVuKGZ1bmN0aW9uIChjYWNoZSkgewogICAgICAgIGlmIChyZXMub2sgJiYgbmV3IFVSTChldmVudC5yZXF1ZXN0LnVybCkub3JpZ2luID09PSBzZWxmLmxvY2F0aW9uLm9yaWdpbikgewogICAgICAgICAgY2FjaGUucHV0KGV2ZW50LnJlcXVlc3QsIGNvcHkpOwogICAgICAgIH0KICAgICAgfSk7CiAgICAgIHJldHVybiByZXM7CiAgICB9KS5jYXRjaChmdW5jdGlvbiAoKSB7CiAgICAgIHJldHVybiBjYWNoZXMubWF0Y2goZXZlbnQucmVxdWVzdCwgeyBpZ25vcmVTZWFyY2g6IHRydWUgfSkudGhlbihmdW5jdGlvbiAoaGl0KSB7CiAgICAgICAgaWYgKGhpdCkgcmV0dXJuIGhpdDsKICAgICAgICBpZiAoZXZlbnQucmVxdWVzdC5tb2RlID09PSAibmF2aWdhdGUiKSByZXR1cm4gY2FjaGVzLm1hdGNoKCIuLi9pbmRleC5odG1sIik7CiAgICAgICAgcmV0dXJuIFJlc3BvbnNlLmVycm9yKCk7CiAgICAgIH0pOwogICAgfSkKICApOwp9KTsK").catch(function () {});
             } catch (e) {}
           });
         }
